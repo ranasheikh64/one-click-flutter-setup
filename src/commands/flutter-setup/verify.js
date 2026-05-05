@@ -3,9 +3,12 @@
  * Checks every tool and prints a beautiful summary table
  */
 
-import chalk  from 'chalk';
-import Table  from 'cli-table3';
+import fs    from 'fs';
+import path  from 'path';
+import chalk from 'chalk';
+import Table from 'cli-table3';
 import { execSync } from 'child_process';
+import { detectOS } from './detect.js';
 
 function tryExec(cmd) {
   try {
@@ -17,6 +20,25 @@ function tryExec(cmd) {
   } catch {
     return null;
   }
+}
+
+// Helper to check if a file exists in common fallback locations
+function existsInFallback(toolKey) {
+  const os = detectOS();
+  const home = process.env.USERPROFILE || process.env.HOME;
+
+  if (toolKey === 'flutterfire') {
+    const windowsPath = path.join(home, 'AppData', 'Local', 'Pub', 'Cache', 'bin', 'flutterfire.bat');
+    const unixPath    = path.join(home, '.pub-cache', 'bin', 'flutterfire');
+    return fs.existsSync(windowsPath) || fs.existsSync(unixPath);
+  }
+
+  if (toolKey === 'flutter') {
+    const flutterExec = path.join(os.flutterDir, 'bin', os.isWindows ? 'flutter.bat' : 'flutter');
+    return fs.existsSync(flutterExec);
+  }
+
+  return false;
 }
 
 const CHECKS = [
@@ -87,10 +109,21 @@ export async function verifyInstallation() {
 
   for (const check of CHECKS) {
     const raw     = tryExec(check.cmd);
-    const version = raw ? check.parse(raw) : null;
+    let ok        = !!raw;
+    let version   = raw ? check.parse(raw) : null;
+    let pending   = false;
+
+    // Fallback: If not in PATH, check if file actually exists on disk
+    if (!ok && existsInFallback(check.key)) {
+      ok = true;
+      version = 'installed (pending restart)';
+      pending = true;
+    }
+
     results.push({
       ...check,
-      ok     : !!raw,
+      ok,
+      pending,
       version: version || (raw ? 'installed' : null),
     });
   }
@@ -113,9 +146,12 @@ export async function verifyInstallation() {
   });
 
   for (const r of results) {
+    let statusText = r.ok ? chalk.green('✔  OK') : chalk.red('✖  Missing');
+    if (r.pending) statusText = chalk.yellow('⚠  Restart Req');
+
     table.push([
       chalk.white(r.label),
-      r.ok ? chalk.green('✔  OK') : chalk.red('✖  Missing'),
+      statusText,
       r.ok
         ? chalk.gray(r.version || 'installed')
         : chalk.yellow(r.fix),
@@ -130,8 +166,6 @@ export async function verifyInstallation() {
 
   if (failed === 0) {
     console.log(chalk.green.bold('  🎉 All checks passed! Your Flutter environment is ready.'));
-  } else if (passed === 0) {
-    console.log(chalk.red.bold('  ✖ No tools detected. Please re-run the setup.'));
   } else {
     console.log(
       chalk.yellow('  ⚠ ') +
