@@ -174,3 +174,4 @@ Pull requests are welcome! Please open an issue first to discuss what you'd like
 ## 📄 License
 
 MIT © [YOUR_NAME]
+# one-click-flutter-setup
