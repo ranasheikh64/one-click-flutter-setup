@@ -17,7 +17,7 @@ function showBanner() {
   const banner = figlet.textSync('DEVTOOL', { font: 'ANSI Shadow' });
   console.log(gradient(['#00d2ff', '#3a7bd5', '#a855f7']).multiline(banner));
   console.log(chalk.gray('  ─────────────────────────────────────────────────────'));
-  console.log(chalk.bold.white('  ⚡ Advanced CLI Tool • v1.0.1 • Windows/Linux/macOS'));
+  console.log(chalk.bold.white('  ⚡ Advanced CLI Tool • v1.0.2 • Windows/Linux/macOS'));
   console.log(chalk.gray('  ─────────────────────────────────────────────────────\n'));
 }
 
@@ -25,7 +25,7 @@ function showBanner() {
 program
   .name('one-click-flutter-setup')
   .description('One-click Flutter development environment setup (Windows/macOS/Linux)')
-  .version('1.0.1');
+  .version('1.0.2');
 
 // command: flutter-setup
 program
