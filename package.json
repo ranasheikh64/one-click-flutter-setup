@@ -1,6 +1,6 @@
 {
   "name": "one-click-flutter-setup",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "One-click Flutter development environment setup for Windows, macOS, and Linux",
   "main": "src/index.js",
   "bin": {
