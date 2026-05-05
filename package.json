@@ -4,8 +4,8 @@
   "description": "One-click Flutter development environment setup for Windows, macOS, and Linux",
   "main": "src/index.js",
   "bin": {
-    "one-click-flutter-setup": "./src/index.js",
-    "flutter-setup": "./src/index.js"
+    "one-click-flutter-setup": "src/index.js",
+    "flutter-setup": "src/index.js"
   },
   "type": "module",
   "engines": {
