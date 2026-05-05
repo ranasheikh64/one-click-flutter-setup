@@ -1,36 +1,23 @@
 /**
- * flutter.js — Flutter SDK installer
- * Downloads the latest stable Flutter SDK from the official release API,
- * extracts it to the install directory, and returns the path.
- *
- * Windows : ZIP → extract to C:\flutter
- * macOS   : tar.xz → extract to ~/development/flutter
- * Linux   : tar.xz → extract to ~/development/flutter
+ * flutter.js — Flutter SDK installer (version-aware)
+ * Supports: Latest Stable (auto-fetched) or pinned versions
+ * Version info comes from version-picker.js catalogue
  */
 
 import https   from 'https';
 import fs      from 'fs';
 import path    from 'path';
-import os      from 'os';
 import chalk   from 'chalk';
 import { downloadFile, extractZip, extractTar, runLive, tempDir, Spinner } from './base.js';
 import { brewAvailable } from '../detect.js';
+import { VERSION_CATALOGUE, getVersionUrl } from '../version-picker.js';
 
-// Fallback pinned versions (used if API is unreachable)
-const PINNED = {
-  win32  : { version: '3.19.5', url: 'https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_3.19.5-stable.zip' },
-  darwin : { version: '3.19.5', url: 'https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_arm64_3.19.5-stable.tar.xz' },
-  linux  : { version: '3.19.5', url: 'https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.19.5-stable.tar.xz' },
-};
-
-// ─── Fetch latest stable release info ────────────────────────────────────────
-async function getLatestRelease(platform) {
+// ─── Fetch latest stable release from Flutter API ─────────────────────────────
+async function fetchLatestRelease(platform) {
   const apiPlatform = { win32: 'windows', darwin: 'macos', linux: 'linux' }[platform];
-  if (!apiPlatform) throw new Error(`Unknown platform: ${platform}`);
 
   return new Promise((resolve) => {
     const url = `https://storage.googleapis.com/flutter_infra_release/releases/releases_${apiPlatform}.json`;
-
     const req = https.get(url, { timeout: 10000 }, (res) => {
       let data = '';
       res.on('data', (c) => (data += c));
@@ -38,120 +25,113 @@ async function getLatestRelease(platform) {
         try {
           const json    = JSON.parse(data);
           const channel = json.releases.find((r) => r.channel === 'stable');
-          if (!channel) return resolve(PINNED[platform]);
-
-          const baseUrl = json.base_url;
-          resolve({
-            version : channel.version,
-            url     : `${baseUrl}/${channel.archive}`,
-          });
-        } catch {
-          resolve(PINNED[platform]);
-        }
+          if (!channel) return resolve(null);
+          resolve({ version: channel.version, url: `${json.base_url}/${channel.archive}` });
+        } catch { resolve(null); }
       });
     });
-
-    req.on('error',   () => resolve(PINNED[platform]));
-    req.on('timeout', () => { req.destroy(); resolve(PINNED[platform]); });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { req.destroy(); resolve(null); });
   });
 }
 
 // ─── Install Flutter SDK ──────────────────────────────────────────────────────
-export async function installFlutter(osInfo, installDir) {
-  const { isWindows, isMac, isLinux, platform } = osInfo;
-  const spin = new Spinner('Fetching Flutter release info...');
+export async function installFlutter(osInfo, installDir, versionChoice = { value: 'latest' }) {
+  const { isWindows, isMac, isLinux, platform, arch } = osInfo;
+  const ver = versionChoice.value;
 
-  console.log(chalk.bold.white('\n  🦋 Installing Flutter SDK'));
+  console.log(chalk.bold.white(`\n  🦋 Installing Flutter SDK ${ver === 'latest' ? '(latest stable)' : ver}`));
   console.log(chalk.gray('  ─────────────────────────────────────'));
   console.log(chalk.gray(`  Install path: ${chalk.cyan(installDir)}`));
 
-  // ─── macOS: try Homebrew first ────────────────────────────────────────────
-  if (isMac && brewAvailable()) {
+  // ─── macOS: try Homebrew first (only for 'latest') ────────────────────────
+  if (isMac && ver === 'latest' && brewAvailable()) {
     try {
       console.log(chalk.gray('  Using Homebrew...'));
       await runLive('brew', ['install', '--cask', 'flutter']);
       console.log(chalk.green('\n  ✔ Flutter installed via Homebrew'));
-      // Homebrew installs to /opt/homebrew/bin/flutter
       return { success: true, method: 'brew', installDir: '/opt/homebrew' };
     } catch {
       console.log(chalk.yellow('\n  ⚠ Homebrew install failed, falling back to manual...'));
     }
   }
 
-  // ─── Fetch latest release info ─────────────────────────────────────────────
-  spin.start();
-  spin.update('Fetching latest Flutter stable release info...');
-  let releaseInfo;
-  try {
-    releaseInfo = await getLatestRelease(platform);
-    spin.succeed(`Flutter ${releaseInfo.version} found`);
-  } catch {
-    spin.warn('Using pinned version');
-    releaseInfo = PINNED[platform] || PINNED.linux;
+  // ─── Resolve download URL ─────────────────────────────────────────────────
+  let downloadUrl = null;
+  let resolvedVer = ver;
+
+  if (ver === 'latest') {
+    const spin = new Spinner('Fetching latest Flutter stable release...');
+    spin.start();
+    const info = await fetchLatestRelease(platform);
+    if (info) {
+      downloadUrl  = info.url;
+      resolvedVer  = info.version;
+      spin.succeed(`Latest stable: Flutter ${resolvedVer}`);
+    } else {
+      spin.warn('Could not fetch release info — using Flutter 3.19.5');
+      downloadUrl  = getVersionUrl('flutter', '3.19.5', platform, arch);
+      resolvedVer  = '3.19.5';
+    }
+  } else {
+    downloadUrl = getVersionUrl('flutter', ver, platform, arch);
+    if (!downloadUrl) throw new Error(`No download URL for Flutter ${ver} on ${platform}`);
+    console.log(chalk.gray(`  Version: ${chalk.white(resolvedVer)}`));
   }
 
-  console.log(chalk.gray(`  Version: ${chalk.white(releaseInfo.version)}`));
-  console.log(chalk.gray(`  URL: ${chalk.cyan(releaseInfo.url.split('/').pop())}\n`));
+  const fileName = downloadUrl.split('/').pop();
+  console.log(chalk.gray(`  Archive: ${chalk.cyan(fileName)}\n`));
 
   // ─── Download ──────────────────────────────────────────────────────────────
-  const fileName = releaseInfo.url.split('/').pop();
-  const dest     = path.join(tempDir(), fileName);
-
+  const dest = path.join(tempDir(), fileName);
   if (fs.existsSync(dest)) {
-    console.log(chalk.gray('  Archive already cached, skipping download'));
+    console.log(chalk.gray('  Archive cached, skipping download'));
   } else {
-    await downloadFile(releaseInfo.url, dest, 'Flutter SDK');
+    await downloadFile(downloadUrl, dest, `Flutter ${resolvedVer}`);
   }
 
   // ─── Extract ──────────────────────────────────────────────────────────────
   const parentDir = path.dirname(installDir);
   fs.mkdirSync(parentDir, { recursive: true });
 
-  const extractSpin = new Spinner('Extracting Flutter SDK (this may take a minute)...');
-  extractSpin.start();
-
+  const spin = new Spinner('Extracting Flutter SDK (may take a minute)...');
+  spin.start();
   try {
     if (fileName.endsWith('.zip')) {
-      // ZIP extraction — flutter/ folder is inside the zip
       await extractZip(dest, parentDir);
     } else {
-      // TAR extraction (.tar.xz, .tar.gz)
       await extractTar(dest, parentDir);
     }
 
-    // The zip/tar extracts a 'flutter' subdirectory
     const extractedPath = path.join(parentDir, 'flutter');
     if (extractedPath !== installDir && fs.existsSync(extractedPath)) {
+      if (fs.existsSync(installDir)) fs.rmSync(installDir, { recursive: true });
       fs.renameSync(extractedPath, installDir);
     }
-
-    extractSpin.succeed('Flutter SDK extracted successfully');
+    spin.succeed('Flutter SDK extracted successfully');
   } catch (e) {
-    extractSpin.fail('Extraction failed');
+    spin.fail('Extraction failed');
     throw e;
   }
 
-  // ─── Verify flutter binary exists ──────────────────────────────────────────
+  // ─── Verify binary ────────────────────────────────────────────────────────
   const flutterBin = path.join(installDir, 'bin', isWindows ? 'flutter.bat' : 'flutter');
   if (!fs.existsSync(flutterBin)) {
     throw new Error(`Flutter binary not found at ${flutterBin}`);
   }
 
-  // ─── Run flutter precache to download Dart SDK ─────────────────────────────
+  // ─── Precache ─────────────────────────────────────────────────────────────
   console.log(chalk.gray('\n  Running flutter precache (downloads Dart SDK)...'));
   try {
     await runLive(flutterBin, ['precache', '--no-android', '--no-ios', '--no-web', '--no-fuchsia']);
-  } catch {
-    // Non-fatal — flutter can still run without precache
-  }
+  } catch {}
 
-  console.log(chalk.green(`\n  ✔ Flutter ${releaseInfo.version} installed at ${installDir}`));
-
+  console.log(chalk.green(`\n  ✔ Flutter ${resolvedVer} installed at ${installDir}`));
   return {
     success    : true,
     method     : 'direct',
     installDir,
-    version    : releaseInfo.version,
+    version    : resolvedVer,
     flutterBin : path.join(installDir, 'bin'),
   };
 }

@@ -1,119 +1,108 @@
 /**
- * java.js — Java JDK 17 installer
- * Windows : winget → direct MSI download (Eclipse Temurin)
- * macOS   : brew install openjdk@17
- * Linux   : apt / dnf / pacman
+ * java.js — Java JDK installer (version-aware)
+ * Supports JDK 11 / 17 / 21 via Eclipse Temurin
+ * Version info comes from version-picker.js catalogue
  */
 
-import { existsSync, mkdirSync } from 'fs';
-import path  from 'path';
 import chalk from 'chalk';
+import path  from 'path';
 import { runLive, runSilent, downloadFile, tempDir, Spinner } from './base.js';
 import { detectLinuxPkgManager, wingetAvailable, brewAvailable } from '../detect.js';
+import { getWingetId, getBrewFormula, getLinuxPkg, getVersionUrl } from '../version-picker.js';
 
-// Eclipse Temurin JDK 17 direct download URLs
-const JAVA_URLS = {
-  win32  : 'https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.10%2B7/OpenJDK17U-jdk_x64_windows_hotspot_17.0.10_7.msi',
-  darwin : 'https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.10%2B7/OpenJDK17U-jdk_x64_mac_hotspot_17.0.10_7.pkg',
-  linux  : 'https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.10%2B7/OpenJDK17U-jdk_x64_linux_hotspot_17.0.10_7.tar.gz',
-};
-
-// macOS arm64
-const JAVA_MAC_ARM = 'https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.10%2B7/OpenJDK17U-jdk_aarch64_mac_hotspot_17.0.10_7.pkg';
-
-export async function installJava(osInfo) {
+export async function installJava(osInfo, versionChoice = { value: '17' }) {
   const { isWindows, isMac, isLinux, arch } = osInfo;
-  const spin = new Spinner('Installing Java JDK 17...');
+  const ver  = versionChoice.value;
+  const spin = new Spinner(`Installing Java JDK ${ver}...`);
 
-  console.log(chalk.bold.white('\n  ☕ Installing Java JDK 17 (Eclipse Temurin)'));
+  console.log(chalk.bold.white(`\n  ☕ Installing Java JDK ${ver} (Eclipse Temurin)`));
   console.log(chalk.gray('  ─────────────────────────────────────────────'));
 
   // ─── Windows ──────────────────────────────────────────────────────────────
   if (isWindows) {
-    if (wingetAvailable()) {
-      console.log(chalk.gray('  Using winget...'));
+    const wingetId = getWingetId('java', ver);
+
+    if (wingetAvailable() && wingetId) {
+      console.log(chalk.gray(`  Using winget (${wingetId})...`));
       try {
         await runLive('winget', [
-          'install', '--id', 'EclipseAdoptium.Temurin.17.JDK',
+          'install', '--id', wingetId,
           '-e', '--silent',
           '--accept-package-agreements',
           '--accept-source-agreements',
         ]);
-        console.log(chalk.green('\n  ✔ Java JDK 17 installed via winget'));
-        return { success: true, method: 'winget' };
+        console.log(chalk.green(`\n  ✔ Java JDK ${ver} installed via winget`));
+        return { success: true, method: 'winget', version: ver };
       } catch {}
     }
 
     // Chocolatey fallback
     try {
       runSilent('choco --version');
-      console.log(chalk.gray('  Using Chocolatey...'));
-      await runLive('choco', ['install', 'temurin17', '-y', '--no-progress']);
-      console.log(chalk.green('\n  ✔ Java JDK 17 installed via Chocolatey'));
-      return { success: true, method: 'choco' };
+      const chocoMap = { '11': 'temurin11', '17': 'temurin17', '21': 'temurin21' };
+      const chocoPkg = chocoMap[ver] || 'temurin17';
+      console.log(chalk.gray(`  Using Chocolatey (${chocoPkg})...`));
+      await runLive('choco', ['install', chocoPkg, '-y', '--no-progress']);
+      console.log(chalk.green(`\n  ✔ Java JDK ${ver} installed via Chocolatey`));
+      return { success: true, method: 'choco', version: ver };
     } catch {}
 
     // Direct MSI download
-    console.log(chalk.gray('  Downloading Eclipse Temurin JDK 17 MSI...'));
-    const dest = path.join(tempDir(), 'jdk17.msi');
-    await downloadFile(JAVA_URLS.win32, dest, 'JDK 17');
+    const url = getVersionUrl('java', ver, 'win32', arch);
+    if (!url) throw new Error(`No download URL found for Java JDK ${ver} on Windows`);
+
+    console.log(chalk.gray(`  Downloading Eclipse Temurin JDK ${ver} MSI...`));
+    const dest = path.join(tempDir(), `jdk${ver}.msi`);
+    await downloadFile(url, dest, `JDK ${ver}`);
     console.log(chalk.gray('\n  Running MSI installer (silent)...'));
     spin.start();
     try {
-      await runLive('msiexec', ['/i', dest, '/qn', '/norestart', 'ADDLOCAL=FeatureMain,FeatureEnvironment,FeatureJarFileRunWith,FeatureJavaHome']);
-      spin.succeed('Java JDK 17 installed successfully');
-      return { success: true, method: 'direct-msi' };
+      await runLive('msiexec', ['/i', dest, '/qn', '/norestart',
+        'ADDLOCAL=FeatureMain,FeatureEnvironment,FeatureJarFileRunWith,FeatureJavaHome']);
+      spin.succeed(`Java JDK ${ver} installed successfully`);
+      return { success: true, method: 'direct-msi', version: ver };
     } catch (e) {
-      spin.fail('Java install failed');
+      spin.fail(`Java JDK ${ver} install failed`);
       throw e;
     }
   }
 
   // ─── macOS ────────────────────────────────────────────────────────────────
   if (isMac) {
-    if (brewAvailable()) {
-      console.log(chalk.gray('  Using Homebrew...'));
-      await runLive('brew', ['install', 'openjdk@17']);
+    const formula = getBrewFormula('java', ver);
 
-      // Homebrew's openjdk needs symlinking for the system Java wrappers
+    if (brewAvailable() && formula) {
+      console.log(chalk.gray(`  Using Homebrew (${formula})...`));
+      await runLive('brew', ['install', formula]);
       try {
-        await runLive('sh', ['-c', 'sudo ln -sfn "$(brew --prefix)/opt/openjdk@17/libexec/openjdk.jdk" /Library/Java/JavaVirtualMachines/openjdk-17.jdk 2>/dev/null || true']);
+        await runLive('sh', ['-c',
+          `sudo ln -sfn "$(brew --prefix)/opt/${formula}/libexec/openjdk.jdk" /Library/Java/JavaVirtualMachines/openjdk-${ver}.jdk 2>/dev/null || true`
+        ]);
       } catch {}
-
-      console.log(chalk.green('\n  ✔ Java JDK 17 installed via Homebrew'));
-      return { success: true, method: 'brew' };
+      console.log(chalk.green(`\n  ✔ Java JDK ${ver} installed via Homebrew`));
+      return { success: true, method: 'brew', version: ver };
     }
 
-    // Direct PKG download
-    const url  = arch === 'arm64' ? JAVA_MAC_ARM : JAVA_URLS.darwin;
-    const dest = path.join(tempDir(), 'jdk17.pkg');
-    console.log(chalk.gray('  Downloading Eclipse Temurin JDK 17 PKG...'));
-    await downloadFile(url, dest, 'JDK 17');
+    const url = getVersionUrl('java', ver, 'darwin', arch);
+    if (!url) throw new Error(`No download URL for Java JDK ${ver} on macOS`);
+    const dest = path.join(tempDir(), `jdk${ver}.pkg`);
+    console.log(chalk.gray(`  Downloading Eclipse Temurin JDK ${ver} PKG...`));
+    await downloadFile(url, dest, `JDK ${ver}`);
     console.log(chalk.gray('\n  Installing (requires sudo)...'));
     await runLive('sudo', ['installer', '-pkg', dest, '-target', '/']);
-    console.log(chalk.green('\n  ✔ Java JDK 17 installed'));
-    return { success: true, method: 'pkg' };
+    console.log(chalk.green(`\n  ✔ Java JDK ${ver} installed`));
+    return { success: true, method: 'pkg', version: ver };
   }
 
   // ─── Linux ────────────────────────────────────────────────────────────────
   if (isLinux) {
     const mgr = detectLinuxPkgManager();
     if (!mgr) throw new Error('No supported package manager found');
-
-    console.log(chalk.gray(`  Using ${mgr.bin}...`));
-
-    const pkgNames = {
-      'apt-get': 'openjdk-17-jdk',
-      'dnf'    : 'java-17-openjdk-devel',
-      'yum'    : 'java-17-openjdk-devel',
-      'pacman' : 'jdk17-openjdk',
-      'zypper' : 'java-17-openjdk-devel',
-    };
-
-    const pkg = pkgNames[mgr.bin] || 'openjdk-17-jdk';
+    const pkg = getLinuxPkg('java', ver, mgr.bin) || `openjdk-${ver}-jdk`;
+    console.log(chalk.gray(`  Using ${mgr.bin} (${pkg})...`));
     await runLive('sh', ['-c', `${mgr.update} && ${mgr.install} ${pkg}`]);
-    console.log(chalk.green('\n  ✔ Java JDK 17 installed'));
-    return { success: true, method: mgr.bin };
+    console.log(chalk.green(`\n  ✔ Java JDK ${ver} installed`));
+    return { success: true, method: mgr.bin, version: ver };
   }
 
   throw new Error('Unsupported OS');
