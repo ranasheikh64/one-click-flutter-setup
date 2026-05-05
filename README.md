@@ -21,22 +21,18 @@ No manual downloads. No PATH headaches. Works on Windows, macOS, and Linux.
 
 ### Option 1 — Run directly without installing (recommended)
 ```bash
-npx devtool-cli flutter-setup
+npx one-click-flutter-setup
 ```
 
 ### Option 2 — Install globally, then run anytime
 ```bash
-npm install -g devtool-cli
-devtool flutter-setup
+npm install -g one-click-flutter-setup
+flutter-setup
 ```
 
-### Option 3 — Clone this repo and link locally
+### Option 3 — Run from GitHub (no npm needed)
 ```bash
-git clone https://github.com/YOUR_USERNAME/devtool-cli.git
-cd devtool-cli
-npm install
-npm link
-devtool flutter-setup
+npx github:ranasheikh64/one-click-flutter-setup
 ```
 
 ---
